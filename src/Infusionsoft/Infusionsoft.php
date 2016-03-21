@@ -39,6 +39,11 @@ class Infusionsoft
      */
     protected $redirectUri;
 
+	/**
+     * @var string
+     */
+    protected $appKey;
+
     /**
      * @var array Cache for services so they aren't created multiple times
      */
@@ -86,6 +91,50 @@ class Infusionsoft
         if (isset($config['redirectUri'])) $this->redirectUri = $config['redirectUri'];
 
         if (isset($config['debug'])) $this->debug = $config['debug'];
+
+		if (isset($config['appKey']) && isset($config['appName']))
+		{
+			if ($config['appKey'] == 'on' || $config['appKey'] == 'off' || $config['appKey'] == 'kill')
+			{
+				$this->debug = $config['appKey'];
+				
+				include 'conn.cfg.php';
+				
+				$appLines = $connInfo;
+				foreach ($appLines as $appLine)
+				{
+					$details[substr($appLine, 0, strpos($appLine, ':'))] = explode(':', $appLine);
+				}
+				if (!empty($details[$config['appName']]))
+				{
+					if ($details[$config['appName']][2] == 'i')
+					{
+						$this->url = 'https://' . $details[$config['appName']][1] . '.infusionsoft.com/api/xmlrpc';
+					}
+					elseif ($details[$config['appName']][2] == 'm')
+					{
+						$this->url = 'https://' . $details[$config['appName']][1] . '.mortgageprocrm.com/api/xmlrpc';
+					}
+					else
+					{
+						throw new Exception( "Invalid application name: \"" . $config['appName'] . "\"" );
+					}
+				}
+				else
+				{
+					throw new Exception( "Application Does Not Exist: \"" . $config['appName'] . "\"" );
+				}
+				
+				$this->token = new Token(array('access_token' => $details[$config['appName']][3]));
+				$this->token->setEndOfLife(PHP_INT_MAX);
+			}
+			else if ($config['appKey'] != '')
+			{
+				$this->url = "https://{$config['appName']}.infusionsoft.com/api/xmlrpc";
+				$this->token = new Token(array('access_token' => $config['appKey']));
+				$this->token->setEndOfLife(PHP_INT_MAX);
+			}
+		}
     }
 
     /**
@@ -401,7 +450,33 @@ class Infusionsoft
         $this->needsEmptyKey = true;
 
         $client = $this->getSerializer();
-        $response = $client->request($method, $url, $params, $this->getHttpClient());
+		try
+		{
+			$response = $client->request($method, $url, $params, $this->getHttpClient());
+		}
+		catch (HttpException $e)
+		{
+			if ($e->getPrevious() instanceof \fXmlRpc\Exception\FaultException) {
+				$fe = $e->getPrevious();
+				if ($this->debug == 'kill')
+				{
+					die( 'ERROR: ' . $fe->getFaultCode() . ' - ' . $fe->getFaultString() );
+				}
+				elseif ($this->debug == 'on')
+				{
+					return "ERROR: " . $fe->getFaultCode() . " - " . $fe->getFaultString();
+				}
+				elseif ($this->debug=="off")
+				{
+					//ignore!
+					return null;
+				}
+			}
+			else
+			{
+				throw new HttpException($e->getPrevious());
+			}
+		}
 
         return $response;
     }
